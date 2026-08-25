@@ -2,41 +2,35 @@ package main
 
 import (
 	"fmt"
+	"sync"
+	"time"
 )
 
 func main() {
-	channel1 := make(chan int)
-	channel2 := make(chan int)
+	var mutex sync.Mutex
+	cond := sync.NewCond(&mutex)
+
+	ready := false
 
 	go func() {
-		channel1 <- 10
-		close(channel1)
+		fmt.Println("Goroutine: Waiting for the condition...")
+
+		mutex.Lock()
+		for !ready {
+			cond.Wait()
+		}
+		fmt.Println("Goroutine: Condition met, proceeding...")
+		mutex.Unlock()
 	}()
 
-	go func() {
-		channel2 <- 20
-		close(channel2)
-	}()
+	time.Sleep(2 * time.Second)
 
-	ClosedChannel1, ClosedChannel2 := false, false
-	for {
-		if ClosedChannel1 && ClosedChannel2 {
-			break
-		}
-		select {
-		case v, ok := <-channel1:
-			if !ok {
-				ClosedChannel1 = true
-				continue
-			}
-			fmt.Println("Channel1", v)
-		case v, ok := <-channel2:
-			if !ok {
-				ClosedChannel2 = true
-				continue
-			}
-			fmt.Println("Channel2", v)
-		}
-	}
+	mutex.Lock()
+	ready = true
+	cond.Signal()
+	mutex.Unlock()
+	fmt.Println("Push signal !")
 
+	time.Sleep(1 * time.Second)
+	fmt.Println("Main: Work is done.")
 }
