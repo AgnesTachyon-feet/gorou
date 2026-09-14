@@ -3,34 +3,76 @@ package main
 import (
 	"fmt"
 	"sync"
-	"time"
+
+	"github.com/gofiber/fiber/v2"
 )
 
-func main() {
-	var mutex sync.Mutex
-	cond := sync.NewCond(&mutex)
+type Message struct {
+	Data string `json:"data"`
+}
 
-	ready := false
+type PubSub struct {
+	subs []chan Message
+	mu   sync.Mutex
+}
 
-	go func() {
-		fmt.Println("Goroutine: Waiting for the condition...")
+func (ps *PubSub) Subscribe() chan Message {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	ch := make(chan Message, 1)
+	ps.subs = append(ps.subs, ch)
+	return ch
+}
 
-		mutex.Lock()
-		for !ready {
-			cond.Wait()
+func (ps *PubSub) Publish(msg *Message) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	for _, sub := range ps.subs {
+		sub <- *msg
+	}
+}
+
+func (ps *PubSub) Unsubscribe(ch chan Message) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	for i, sub := range ps.subs {
+		if sub == ch {
+			ps.subs = append(ps.subs[:i], ps.subs[i+1:]...)
+			close(ch)
+			break
 		}
-		fmt.Println("Goroutine: Condition met, proceeding...")
-		mutex.Unlock()
+	}
+}
+
+func main() {
+	app := fiber.New()
+
+	pubsub := &PubSub{}
+
+	app.Post("/publisher", func(c *fiber.Ctx) error {
+		message := new(Message)
+		if err := c.BodyParser(message); err != nil {
+			return c.SendStatus(fiber.StatusBadRequest)
+		}
+		pubsub.Publish(message)
+		return c.JSON(&fiber.Map{
+			"message": "add to subscriber",
+		})
+	})
+
+	sub := pubsub.Subscribe()
+	go func() {
+		for msg := range sub {
+			fmt.Println("Receive message: ", msg)
+		}
 	}()
 
-	time.Sleep(2 * time.Second)
+	sub2 := pubsub.Subscribe()
+	go func() {
+		for msg := range sub2 {
+			fmt.Println("Receive message sub2: ", msg)
+		}
+	}()
 
-	mutex.Lock()
-	ready = true
-	cond.Signal()
-	mutex.Unlock()
-	fmt.Println("Push signal !")
-
-	time.Sleep(1 * time.Second)
-	fmt.Println("Main: Work is done.")
+	app.Listen(":8888")
 }
